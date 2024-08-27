@@ -7,7 +7,6 @@ from flask_socketio import SocketIO, emit
 import base64
 from flask_cors import CORS 
 
-
 # Initialize Flask app and SocketIO
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins=["http://127.0.0.1:5500"])  # Allow specific origin
@@ -22,23 +21,20 @@ def preprocess_image(image):
     return enhanced
 
 def detect_face(image):
-    """Detects face and returns the face encoding."""
+    """Detects face and returns the face encoding if exactly one face is detected."""
     image = preprocess_image(image)
     rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     face_locations = face_recognition.face_locations(rgb_image)
     
-    if len(face_locations) == 0:
-        raise ValueError("No face detected in the image.")
-    elif len(face_locations) > 1:
-        raise ValueError("More than one face detected in the image.")
-    
-    face_encodings = face_recognition.face_encodings(rgb_image, face_locations)
-    return face_encodings[0]
+    if len(face_locations) == 1:
+        face_encodings = face_recognition.face_encodings(rgb_image, face_locations)
+        return face_encodings[0]
+    else:
+        raise ValueError("Face detection failed or multiple faces detected.")
 
-def compare_faces(image_encoding, video_frame):
-    """Compares the face in the image with the face in a video frame."""
-    frame = preprocess_image(video_frame)
-    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+def compare_faces(reference_encoding, video_frame):
+    """Compares the face in the reference frame with the face in a video frame."""
+    rgb_frame = cv2.cvtColor(video_frame, cv2.COLOR_BGR2RGB)
     frame_encodings = face_recognition.face_encodings(rgb_frame)
     
     if len(frame_encodings) == 0:
@@ -46,7 +42,7 @@ def compare_faces(image_encoding, video_frame):
     elif len(frame_encodings) > 1:
         raise ValueError("More than one person detected in the video. Possible cheating detected.")
     
-    return face_recognition.compare_faces([image_encoding], frame_encodings[0], tolerance=0.6)
+    return face_recognition.compare_faces([reference_encoding], frame_encodings[0], tolerance=0.6)
 
 def detect_emotion(video_frame):
     """Detects emotion from the face in the video frame."""
@@ -54,7 +50,7 @@ def detect_emotion(video_frame):
     
     if not emotion_data:
         print("No face detected for emotion analysis.")
-        return
+        return  # Return early if no face for emotion detection
     
     top_emotion = emotion_detector.top_emotion(video_frame)
     emotion, score = top_emotion
@@ -79,30 +75,12 @@ def check_background_change(video_frame, reference_frame, threshold=50):
 
 # To store the first frame as the reference frame for background comparison
 reference_frame = None
-def load_image_encoding(path):
-    """Load the image and return its face encoding."""
-    image = face_recognition.load_image_file(path)
-    face_encodings = face_recognition.face_encodings(image)
-    
-    if len(face_encodings) == 0:
-        raise ValueError("No faces found in the image.")
-    
-    return face_encodings[0]
-try:
-    image_path = r"D:\OMR\chatgpt_api\uploads\photo_20240826111538.jpg"
-    image_encoding = load_image_encoding(image_path)
-    print("Face encoding loaded successfully.")
-except ValueError as e:
-    print(f"Error: {e}")
-    # Handle the case where no face is found, e.g., use a default encoding or terminate
-    image_encoding = None
-
+reference_encoding = None
 
 # Handle video frame events from the frontend
 @socketio.on('video_data')
 def handle_video_frame(data):
-    global reference_frame, image_encoding
-
+    global reference_frame, reference_encoding
 
     # Decode the base64 image data from frontend
     np_data = np.frombuffer(base64.b64decode(data), np.uint8)
@@ -110,10 +88,21 @@ def handle_video_frame(data):
 
     if reference_frame is None:
         reference_frame = frame
-        print("none hai prame")
+        rgb_reference_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        face_encodings = face_recognition.face_encodings(rgb_reference_frame)
+        if len(face_encodings) == 0:
+            print("No face detected in the reference frame.")
+            reference_frame = None
+            return
+        elif len(face_encodings) > 1:
+            print("Multiple faces detected in the reference frame.")
+            reference_frame = None
+            return
+        reference_encoding = face_encodings[0]
+        print("Reference frame set.")
 
     try:
-        face_match = compare_faces(image_encoding, frame)
+        face_match = compare_faces(reference_encoding, frame)
         if not face_match[0]:
             print("Face mismatch detected. Possible cheating!")
 
@@ -121,10 +110,6 @@ def handle_video_frame(data):
 
         if check_background_change(frame, reference_frame):
             print("Significant background change detected. Possible cheating!")
-
-        cv2.imshow('Live Video Feed', frame)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            cv2.destroyAllWindows()
 
     except ValueError as e:
         print(f"Error: {e}")

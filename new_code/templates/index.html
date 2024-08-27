@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Video Stream</title>
+    <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
+    <style>
+        #videoElement {
+            width: 100%;
+            height: auto;
+        }
+    </style>
+</head>
+<body>
+    <video id="videoElement" autoplay></video>
+
+    <script>
+        const video = document.getElementById('videoElement');
+        const socket = io.connect('http://localhost:5000');
+
+        // Capture and send video stream to the backend
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then((stream) => {
+                video.srcObject = stream;
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                
+                // Set canvas size to video dimensions
+                video.addEventListener('loadedmetadata', () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                });
+                
+                setInterval(() => {
+                    if (canvas.width && canvas.height) {
+                        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                        canvas.toBlob((blob) => {
+                            const reader = new FileReader();
+                            reader.onloadend = () => {
+                                const base64data = reader.result.split(',')[1];
+                                socket.emit('video_data', base64data);
+                            };
+                            reader.readAsDataURL(blob);
+                        });
+                    }
+                }, 100);  // Send a frame every 100ms
+            })
+            .catch(err => console.error("Error accessing camera:", err));
+
+        // Listen for server responses
+        socket.on('video_stream', (data) => {
+            console.log('Video stream data received:', data);
+        });
+
+        socket.on('result', (data) => {
+            console.log('Result:', data);
+            // You can update the UI based on the result data here
+        });
+    </script>
+</body>
+</html>
