@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Face Detection</title>
+    <style>
+        #video {
+            width: 100%;
+            max-width: 400px;
+        }
+        #canvas {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>Capture Image from Webcam</h1>
+    <video id="video" autoplay></video>
+    <button id="capture">Capture Photo</button>
+    <canvas id="canvas"></canvas>
+    <p id="message"></p>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const captureButton = document.getElementById('capture');
+        const message = document.getElementById('message');
+        const ctx = canvas.getContext('2d');
+    
+        // Access the user's webcam
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(stream => {
+                video.srcObject = stream;
+                video.addEventListener('play', () => {
+                    drawFaceBoxes();
+                });
+            })
+            .catch(err => {
+                console.error("Error accessing the webcam: ", err);
+            });
+    
+        // Function to draw rectangles around detected faces
+        function drawFaceBoxes() {
+            const videoWidth = video.videoWidth;
+            const videoHeight = video.videoHeight;
+            canvas.width = videoWidth;
+            canvas.height = videoHeight;
+    
+            const context = canvas.getContext('2d');
+    
+            setInterval(() => {
+                context.drawImage(video, 0, 0, videoWidth, videoHeight);
+                fetch('http://localhost:5000/detect_faces', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        image: canvas.toDataURL('image/jpeg')
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    context.clearRect(0, 0, canvas.width, canvas.height);
+                    context.drawImage(video, 0, 0, videoWidth, videoHeight);
+    
+                    data.faces.forEach(face => {
+                        context.beginPath();
+                        context.rect(face.x, face.y, face.width, face.height);
+                        context.lineWidth = 2;
+                        context.strokeStyle = 'red';
+                        context.stroke();
+                        context.closePath();
+                    });
+                })
+                .catch(error => {
+                    console.error('Error detecting faces:', error);
+                });
+            }, 1000); // Detect faces every second
+        }
+    
+        // Function to capture the image
+        captureButton.addEventListener('click', () => {
+            const context = canvas.getContext('2d');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    
+            const dataURL = canvas.toDataURL('image/jpeg');
+    
+            // Send the image to the backend
+            fetch('http://localhost:5000/upload', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ image: dataURL })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.redirect) {
+                    // Redirect to the success page
+                    window.location.href = data.redirect;
+                } else {
+                    // Display message from the response
+                    message.innerHTML = data.message;
+                }
+            })
+            .catch(error => {
+                console.error('Error uploading the image:', error);
+            });
+        });
+    </script>
+    
+</body>
+</html>
